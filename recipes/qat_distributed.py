@@ -6,6 +6,7 @@
 
 import sys
 import time
+from pathlib import Path
 
 from functools import partial
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -712,6 +713,23 @@ class QATRecipeDistributed(FTRecipeInterface):
         # to be sent to the checkpointer and ultimately written to file
 
         if self._is_rank_zero:
+            # Save pissaquant A/B parameters separately for analysis/comparison.
+            # We keep them in the main checkpoint as well to allow resume.
+            ab_state_dict = {
+                k: v
+                for k, v in cpu_state_dict.items()
+                if ".weight_fake_quantizer." in k
+            }
+            if ab_state_dict:
+                ab_dir = Path(self._output_dir) / "pissaquant_ab"
+                ab_dir.mkdir(parents=True, exist_ok=True)
+                ab_path = ab_dir / f"pissaquant_ab_epoch_{epoch}.pth"
+                torch.save(ab_state_dict, ab_path)
+                # Also write a stable "final" snapshot on last epoch.
+                if not intermediate_checkpoint:
+                    final_path = ab_dir / "pissaquant_ab_final.pth"
+                    torch.save(ab_state_dict, final_path)
+
             start = time.perf_counter()
             checkpoint_dict.update({training.MODEL_KEY: cpu_state_dict})
 

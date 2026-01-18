@@ -44,6 +44,16 @@ _FROM_HF = {
 }
 
 
+_PASSTHROUGH_KEY_SUBSTRINGS = (
+    # PissaQuant trainable scale factors
+    ".weight_fake_quantizer.",
+)
+
+
+def _should_passthrough_key(key: str) -> bool:
+    return any(substr in key for substr in _PASSTHROUGH_KEY_SUBSTRINGS)
+
+
 def get_mapped_key(key: str, mapping_dict: Dict[str, str]) -> str:
     try:
         # Checks if there is a layer # in the key
@@ -81,9 +91,14 @@ def meta_to_tune(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]
     """
     converted_state_dict = {}
     for key, value in state_dict.items():
-        if key not in ["rope.freqs"]:  # Skip loading the position embeddings
-            new_key = get_mapped_key(key, _FROM_META)
-            converted_state_dict[new_key] = value
+        if key in ["rope.freqs"]:  # Skip loading the position embeddings
+            continue
+        if _should_passthrough_key(key):
+            # Keep pissaquant params in tune format
+            converted_state_dict[key] = value
+            continue
+        new_key = get_mapped_key(key, _FROM_META)
+        converted_state_dict[new_key] = value
 
     return converted_state_dict
 
@@ -104,6 +119,10 @@ def tune_to_meta(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]
     inverted_mapping_dict = {v: k for k, v in _FROM_META.items()}
 
     for key, value in state_dict.items():
+        if _should_passthrough_key(key):
+            # Keep pissaquant params in tune format (no Meta mapping exists)
+            converted_state_dict[key] = value
+            continue
         new_key = get_mapped_key(key, inverted_mapping_dict)
         converted_state_dict[new_key] = value
 
@@ -148,14 +167,18 @@ def hf_to_tune(
         )
 
     for key, value in state_dict.items():
-        if "rotary_emb.inv_freq" not in key:  # Skip loading the position embeddings
-            new_key = get_mapped_key(key, _FROM_HF)
-            if "q_proj" in key:
-                value = _permute(value, num_heads)
-            elif "k_proj" in key:
-                value = _permute(value, num_kv_heads)
+        if "rotary_emb.inv_freq" in key:  # Skip loading the position embeddings
+            continue
+        if _should_passthrough_key(key):
+            converted_state_dict[key] = value
+            continue
+        new_key = get_mapped_key(key, _FROM_HF)
+        if "q_proj" in key:
+            value = _permute(value, num_heads)
+        elif "k_proj" in key:
+            value = _permute(value, num_kv_heads)
 
-            converted_state_dict[new_key] = value
+        converted_state_dict[new_key] = value
     return converted_state_dict
 
 
@@ -195,6 +218,10 @@ def tune_to_hf(
         )
 
     for key, value in state_dict.items():
+        if _should_passthrough_key(key):
+            # Keep pissaquant params in tune format (no HF mapping exists)
+            converted_state_dict[key] = value
+            continue
         new_key = get_mapped_key(key, inverted_mapping_dict)
         if "q_proj" in key:
             value = _permute(value, num_heads)
