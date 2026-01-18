@@ -483,6 +483,12 @@ class QATRecipeDistributed(FTRecipeInterface):
             )
         self._quantizer_mode = quantizer_mode
         model = quantizer.prepare(model)
+        # Some QAT methods (e.g. pissaquant) introduce *new trainable parameters*
+        # that do not exist in the base checkpoint. For strict loading to work,
+        # these methods can augment the checkpoint state dict in-place using the
+        # full-precision weights (available here as `model_state_dict`).
+        if hasattr(quantizer, "augment_model_state_dict"):
+            model_state_dict = quantizer.augment_model_state_dict(model, model_state_dict)
 
         # For FSDP sharding
         fsdp_shard_conditions = [

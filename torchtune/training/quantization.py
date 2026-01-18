@@ -28,12 +28,15 @@ try:
     from torchao.quantization.qat import (
         Int4WeightOnlyQATQuantizer,
         Int8DynActInt4WeightQATQuantizer,
+        PissaQuantInt4WeightQATQuantizer,
     )
     from torchao.quantization.qat.linear import (
         disable_4w_fake_quant,
         disable_8da4w_fake_quant,
+        disable_pissaquant_fake_quant,
         enable_4w_fake_quant,
         enable_8da4w_fake_quant,
+        enable_pissaquant_fake_quant,
     )
 except ImportError:
     # torchao 0.6 and before
@@ -55,6 +58,7 @@ __all__ = [
     "Int8DynActInt4WeightQuantizer",
     "Int8DynActInt4WeightQATQuantizer",
     "Int8DynActInt4WeightQATQuantizerModuleSwap",
+    "PissaQuantInt4WeightQATQuantizer",
 ]
 
 
@@ -121,6 +125,14 @@ _quantizer_to_mode[Int4WeightOnlyQuantizer] = "4w"
 _quantizer_to_mode[Int4WeightOnlyQATQuantizer] = "4w-qat"
 _quantizer_mode_to_disable_fake_quant["4w-qat"] = disable_4w_fake_quant
 _quantizer_mode_to_enable_fake_quant["4w-qat"] = enable_4w_fake_quant
+
+# ==========================
+# pissaquant (int4, QAT)   |
+# ==========================
+if "PissaQuantInt4WeightQATQuantizer" in globals():
+    _quantizer_to_mode[PissaQuantInt4WeightQATQuantizer] = "pissaquant-qat"
+    _quantizer_mode_to_disable_fake_quant["pissaquant-qat"] = disable_pissaquant_fake_quant
+    _quantizer_mode_to_enable_fake_quant["pissaquant-qat"] = enable_pissaquant_fake_quant
 
 
 # ====================== #
