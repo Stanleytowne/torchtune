@@ -484,6 +484,8 @@ class QATRecipeDistributed(FTRecipeInterface):
             )
         self._quantizer_mode = quantizer_mode
         model = quantizer.prepare(model)
+        # Log pissaquant parameter counts before any sharding.
+        self._log_pissaquant_param_stats(model, quantizer)
         # Some QAT methods (e.g. pissaquant) introduce *new trainable parameters*
         # that do not exist in the base checkpoint. For strict loading to work,
         # these methods can augment the checkpoint state dict in-place using the
@@ -541,6 +543,39 @@ class QATRecipeDistributed(FTRecipeInterface):
         torch.distributed.barrier()
 
         return model
+
+    def _log_pissaquant_param_stats(self, model: nn.Module, quantizer: Any) -> None:
+        """
+        Log total A/B parameter count and equivalent int4 block-wise scale count
+        for pissaquant layers. Best-effort; no-op if pissaquant is not used.
+        """
+        if not self._is_rank_zero:
+            return
+        try:
+            from torchao.quantization.qat.linear import PissaQuantQATLinear
+        except Exception:
+            return
+        cfg = getattr(quantizer, "weight_qat_config", None)
+        if cfg is None or not hasattr(cfg, "block_size"):
+            return
+
+        total_ab = 0
+        total_scale = 0
+        for mod in model.modules():
+            if isinstance(mod, PissaQuantQATLinear):
+                total_ab += mod.weight_fake_quantizer.A.numel()
+                total_ab += mod.weight_fake_quantizer.B.numel()
+                n_blocks = mod.in_features // cfg.block_size
+                total_scale += mod.out_features * n_blocks
+
+        if total_ab > 0:
+            utils.log_rank_zero(
+                log,
+                "PissaQuant param count: AB=%s vs int4 scales=%s (block_size=%s)",
+                f"{total_ab:,}",
+                f"{total_scale:,}",
+                cfg.block_size,
+            )
 
     def _setup_optimizer(
         self,
@@ -725,10 +760,6 @@ class QATRecipeDistributed(FTRecipeInterface):
                 ab_dir.mkdir(parents=True, exist_ok=True)
                 ab_path = ab_dir / f"pissaquant_ab_epoch_{epoch}.pth"
                 torch.save(ab_state_dict, ab_path)
-                # Also write a stable "final" snapshot on last epoch.
-                if not intermediate_checkpoint:
-                    final_path = ab_dir / "pissaquant_ab_final.pth"
-                    torch.save(ab_state_dict, final_path)
 
             start = time.perf_counter()
             checkpoint_dict.update({training.MODEL_KEY: cpu_state_dict})
