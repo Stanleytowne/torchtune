@@ -571,10 +571,7 @@ class QATRecipeDistributed(FTRecipeInterface):
         if total_ab > 0:
             utils.log_rank_zero(
                 log,
-                "PissaQuant param count: AB=%s vs int4 scales=%s (block_size=%s)",
-                f"{total_ab:,}",
-                f"{total_scale:,}",
-                cfg.block_size,
+                f"PissaQuant param count: AB={total_ab} vs int4 scales={total_scale} (block_size={cfg.block_size})",
             )
 
     def _setup_optimizer(
