@@ -72,10 +72,8 @@ def recipe_main(cfg: DictConfig) -> None:
         model.apply(_apply_fake_quant_inplace)
 
     # Gather and save in torchtune format.
-    ckpt_dict = model.state_dict()
-    for name in ckpt_dict.keys():
-        if 'fake_quantizer' in name:
-            ckpt_dict.pop(name)
+    ckpt_dict_full = model.state_dict()
+    ckpt_dict = {key: value for key, value in ckpt_dict_full.items() if 'fake_quantizer' not in key}
 
     file_name = "model-00001-of-00001"
 
