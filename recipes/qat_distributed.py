@@ -486,12 +486,18 @@ class QATRecipeDistributed(FTRecipeInterface):
         model = quantizer.prepare(model)
         # Log pissaquant parameter counts before any sharding.
         self._log_pissaquant_param_stats(model, quantizer)
-        # Some QAT methods (e.g. pissaquant) introduce *new trainable parameters*
-        # that do not exist in the base checkpoint. For strict loading to work,
-        # these methods can augment the checkpoint state dict in-place using the
-        # full-precision weights (available here as `model_state_dict`).
-        if hasattr(quantizer, "augment_model_state_dict"):
-            model_state_dict = quantizer.augment_model_state_dict(model, model_state_dict)
+        # If pissaquant AB parameters are provided, merge them into the checkpoint
+        # state dict before loading.
+        ab_path = getattr(quantizer, "ab_state_dict_path", None)
+        if ab_path:
+            ab_state = torch.load(ab_path, map_location="cpu")
+            if isinstance(ab_state, dict) and "state_dict" in ab_state:
+                ab_state = ab_state["state_dict"]
+            if not isinstance(ab_state, dict):
+                raise ValueError(
+                    f"AB state dict at {ab_path} must be a dict, got {type(ab_state)}"
+                )
+            model_state_dict.update(ab_state)
 
         # For FSDP sharding
         fsdp_shard_conditions = [
