@@ -488,7 +488,7 @@ class QATRecipeDistributed(FTRecipeInterface):
         self._log_pissaquant_param_stats(model, quantizer)
         # If pissaquant AB parameters are provided, merge them into the checkpoint
         # state dict before loading.
-        ab_path = getattr(quantizer, "ab_state_dict_path", None)
+        ab_path = getattr(quantizer, "pissaquant_ab_init_path", None)
         if ab_path:
             ab_state = torch.load(ab_path, map_location="cpu")
             if isinstance(ab_state, dict) and "state_dict" in ab_state:
