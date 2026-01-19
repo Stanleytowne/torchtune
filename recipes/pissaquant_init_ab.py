@@ -103,6 +103,35 @@ def recipe_main(cfg: DictConfig) -> None:
             s_full, rank=rank, niter=cfg_q.svd_niter
         )
 
+        # Compute quantization errors (Frobenius norm)
+        w_fp32 = w.to(torch.float32)
+        # PissaQuant (AB) quantization
+        scale_ab = torch.abs(B.to(torch.float32) @ A.to(torch.float32)) + float(
+            cfg_q.eps
+        )
+        q_ab = torch.round(w_fp32 / scale_ab).clamp(-8, 7)
+        w_ab = q_ab * scale_ab
+        err_ab = torch.linalg.norm(w_fp32 - w_ab).item()
+
+        # Block-wise int4 weight-only quantization (baseline)
+        bsz = cfg_q.block_size
+        if w.shape[1] % bsz != 0:
+            raise ValueError(
+                f"in_features ({w.shape[1]}) must be divisible by block_size ({bsz}) "
+                "to compute block-wise baseline error."
+            )
+        w_blocks = w_fp32.view(w.shape[0], w.shape[1] // bsz, bsz)
+        scale_blk = torch.amax(torch.abs(w_blocks), dim=-1, keepdim=True) / 7.0
+        scale_blk = torch.clamp(scale_blk, min=float(cfg_q.eps))
+        q_blk = torch.round(w_blocks / scale_blk).clamp(-8, 7)
+        w_blk = (q_blk * scale_blk).view_as(w_fp32)
+        err_blk = torch.linalg.norm(w_fp32 - w_blk).item()
+
+        utils.log_rank_zero(
+            log,
+            f"Quant error (fro) {module_name}: pissaquant_ab={err_ab:.6e}, blockwise_int4={err_blk:.6e}",
+        )
+
         prefix = weight_key[: -len(".weight")] if weight_key != "weight" else ""
         A_key = f"{prefix}.weight_fake_quantizer.A" if prefix else "weight_fake_quantizer.A"
         B_key = f"{prefix}.weight_fake_quantizer.B" if prefix else "weight_fake_quantizer.B"
