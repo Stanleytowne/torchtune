@@ -120,11 +120,7 @@ def recipe_main(cfg: DictConfig) -> None:
 
     utils.log_rank_zero(
         log,
-        "Saved PissaQuant A/B init: %s (AB params=%s, int4 scales=%s, block_size=%s)",
-        str(out_path),
-        f"{total_ab:,}",
-        f"{total_scale:,}",
-        cfg_q.block_size,
+        f"PissaQuant param count: AB={total_ab} vs int4 scales={total_scale} (block_size={cfg.block_size})",
     )
 
 
