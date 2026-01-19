@@ -226,7 +226,7 @@ def recipe_main(cfg: DictConfig) -> None:
 
     output_dir = Path(cfg.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = Path(cfg.get("pissaquant_ab_init_path", output_dir / "pissaquant_ab_init.pth"))
+    out_path = Path(cfg_q.get("pissaquant_ab_init_path", output_dir / "pissaquant_ab_init.pth"))
     torch.save(ab_state_dict, out_path)
 
     utils.log_rank_zero(
