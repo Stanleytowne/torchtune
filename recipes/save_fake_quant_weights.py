@@ -56,7 +56,7 @@ def recipe_main(cfg: DictConfig) -> None:
     # If pissaquant AB parameters are provided, merge them before loading.
     ab_path = getattr(quantizer, "pissaquant_ab_init_path", None)
     if ab_path:
-        ab_state = torch.load(ab_path, map_location="cpu")
+        ab_state = torch.load(ab_path, map_location=device)
         if isinstance(ab_state, dict) and "state_dict" in ab_state:
             ab_state = ab_state["state_dict"]
         if not isinstance(ab_state, dict):
@@ -73,6 +73,9 @@ def recipe_main(cfg: DictConfig) -> None:
 
     # Gather and save in torchtune format.
     ckpt_dict = model.state_dict()
+    for name in ckpt_dict.keys():
+        if 'fake_quantizer' in name:
+            ckpt_dict.pop(name)
 
     file_name = "model-00001-of-00001"
 
