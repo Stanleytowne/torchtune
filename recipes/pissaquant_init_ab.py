@@ -117,6 +117,14 @@ def recipe_main(cfg: DictConfig) -> None:
 
     refine_steps = int(cfg.get("pissaquant_ab_refine_steps", 0))
     refine_lr = float(cfg.get("pissaquant_ab_refine_lr", 1e-3))
+    compute_device = torch.device(cfg.get("pissaquant_ab_device", cfg.device))
+    if compute_device.type == "cuda" and not torch.cuda.is_available():
+        utils.log_rank_zero(
+            log,
+            "pissaquant_ab_device was set to cuda but CUDA is not available; falling back to CPU.",
+        )
+        compute_device = torch.device("cpu")
+    utils.log_rank_zero(log, f"PissaQuant AB init device: {compute_device}")
 
     for module_name, mod in model.named_modules():
         if not isinstance(mod, PissaQuantQATLinear):
@@ -139,8 +147,10 @@ def recipe_main(cfg: DictConfig) -> None:
                 f"got in_features={w.shape[1]}, rank={rank}."
             )
 
+        # Move weight to compute device for factorization and error measurement
+        w_fp32 = w.to(device=compute_device, dtype=torch.float32)
         scales_block = _pissaquant_blockwise_symmetric_scales(
-            w, block_size=init_block_size, eps=cfg_q.eps
+            w_fp32, block_size=init_block_size, eps=cfg_q.eps
         )
         s_full = scales_block.repeat_interleave(init_block_size, dim=1)
         B, A = _pissaquant_lowrank_factorize(
@@ -148,7 +158,6 @@ def recipe_main(cfg: DictConfig) -> None:
         )
 
         # Compute quantization errors (Frobenius norm)
-        w_fp32 = w.to(torch.float32)
         # PissaQuant (AB) quantization before refinement
         scale_ab = torch.abs(B.to(torch.float32) @ A.to(torch.float32)) + float(
             cfg_q.eps
@@ -206,8 +215,9 @@ def recipe_main(cfg: DictConfig) -> None:
         A_key = f"{prefix}.weight_fake_quantizer.A" if prefix else "weight_fake_quantizer.A"
         B_key = f"{prefix}.weight_fake_quantizer.B" if prefix else "weight_fake_quantizer.B"
 
-        ab_state_dict[A_key] = A.to(dtype=w.dtype)
-        ab_state_dict[B_key] = B.to(dtype=w.dtype)
+        # Store on CPU for saving; preserve original weight dtype
+        ab_state_dict[A_key] = A.to(device="cpu", dtype=w.dtype)
+        ab_state_dict[B_key] = B.to(device="cpu", dtype=w.dtype)
 
         total_ab += A.numel() + B.numel()
         total_scale += w.shape[0] * (w.shape[1] // cfg_q.block_size)
