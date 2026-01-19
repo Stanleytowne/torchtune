@@ -31,6 +31,47 @@ def _resolve_weight_key(
     return None
 
 
+def _refine_ab(
+    w_fp32: torch.Tensor,
+    B: torch.Tensor,
+    A: torch.Tensor,
+    *,
+    eps: float,
+    steps: int,
+    lr: float,
+) -> Dict[str, torch.Tensor]:
+    """
+    Iteratively refine A/B to reduce quantization error.
+    We alternate:
+      A) fix A/B, compute nearest int4 Q
+      B) fix Q, optimize A/B with MSE loss
+    """
+    if steps <= 0:
+        return {"B": B, "A": A}
+
+    device = w_fp32.device
+    B = B.to(device=device, dtype=torch.float32).detach().requires_grad_(True)
+    A = A.to(device=device, dtype=torch.float32).detach().requires_grad_(True)
+    optimizer = torch.optim.Adam([B, A], lr=lr)
+
+    qmin, qmax = -8, 7
+    for _ in range(steps):
+        with torch.no_grad():
+            scale = torch.abs(B @ A) + eps
+            scale = torch.clamp(scale, min=eps)
+            q = torch.round(w_fp32 / scale).clamp(qmin, qmax)
+
+        optimizer.zero_grad(set_to_none=True)
+        scale = torch.abs(B @ A) + eps
+        scale = torch.clamp(scale, min=eps)
+        w_hat = scale * q
+        loss = torch.linalg.norm(w_hat - w_fp32)
+        loss.backward()
+        optimizer.step()
+
+    return {"B": B.detach(), "A": A.detach()}
+
+
 @config.parse
 def recipe_main(cfg: DictConfig) -> None:
     """
@@ -74,6 +115,9 @@ def recipe_main(cfg: DictConfig) -> None:
     total_ab = 0
     total_scale = 0
 
+    refine_steps = int(cfg.get("pissaquant_ab_refine_steps", 0))
+    refine_lr = float(cfg.get("pissaquant_ab_refine_lr", 1e-3))
+
     for module_name, mod in model.named_modules():
         if not isinstance(mod, PissaQuantQATLinear):
             continue
@@ -105,7 +149,7 @@ def recipe_main(cfg: DictConfig) -> None:
 
         # Compute quantization errors (Frobenius norm)
         w_fp32 = w.to(torch.float32)
-        # PissaQuant (AB) quantization
+        # PissaQuant (AB) quantization before refinement
         scale_ab = torch.abs(B.to(torch.float32) @ A.to(torch.float32)) + float(
             cfg_q.eps
         )
@@ -127,10 +171,36 @@ def recipe_main(cfg: DictConfig) -> None:
         w_blk = (q_blk * scale_blk).view_as(w_fp32)
         err_blk = torch.linalg.norm(w_fp32 - w_blk).item()
 
-        utils.log_rank_zero(
-            log,
-            f"Quant error (fro) {module_name}: pissaquant_ab={err_ab:.6e}, blockwise_int4={err_blk:.6e}",
-        )
+        # Optional refinement
+        if refine_steps > 0:
+            refined = _refine_ab(
+                w_fp32,
+                B,
+                A,
+                eps=float(cfg_q.eps),
+                steps=refine_steps,
+                lr=refine_lr,
+            )
+            B = refined["B"]
+            A = refined["A"]
+
+            scale_ab = torch.abs(B @ A) + float(cfg_q.eps)
+            q_ab = torch.round(w_fp32 / scale_ab).clamp(-8, 7)
+            w_ab = q_ab * scale_ab
+            err_ab_refined = torch.linalg.norm(w_fp32 - w_ab).item()
+            utils.log_rank_zero(
+                log,
+                (
+                    f"Quant error (fro) {module_name}: "
+                    f"pissaquant_ab={err_ab:.6e} -> {err_ab_refined:.6e}, "
+                    f"blockwise_int4={err_blk:.6e}"
+                ),
+            )
+        else:
+            utils.log_rank_zero(
+                log,
+                f"Quant error (fro) {module_name}: pissaquant_ab={err_ab:.6e}, blockwise_int4={err_blk:.6e}",
+            )
 
         prefix = weight_key[: -len(".weight")] if weight_key != "weight" else ""
         A_key = f"{prefix}.weight_fake_quantizer.A" if prefix else "weight_fake_quantizer.A"
