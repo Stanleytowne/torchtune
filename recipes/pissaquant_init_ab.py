@@ -212,8 +212,6 @@ def recipe_main(cfg: DictConfig) -> None:
             )
 
         prefix = weight_key[: -len(".weight")] if weight_key != "weight" else ""
-        if 'layers' in prefix:
-            prefix = prefix + '._checkpoint_wrapped_module'
         A_key = f"{prefix}.weight_fake_quantizer.A" if prefix else "weight_fake_quantizer.A"
         B_key = f"{prefix}.weight_fake_quantizer.B" if prefix else "weight_fake_quantizer.B"
 
