@@ -554,6 +554,12 @@ _ALL_RECIPES = [
         supports_distributed=True,
     ),
     Recipe(
+        name="pissaquant_init_ab",
+        file_path="pissaquant_init_ab.py",
+        configs=[],
+        supports_distributed=False,
+    ),
+    Recipe(
         name="qat_lora_finetune_distributed",
         file_path="qat_lora_finetune_distributed.py",
         configs=[
