@@ -74,20 +74,15 @@ def recipe_main(cfg: DictConfig) -> None:
     # Gather and save in torchtune format.
     ckpt_dict = model.state_dict()
 
-    file_name = checkpointer.checkpoint_files[0].split(".")[0]
+    file_name = "model-00001-of-00001"
 
-    output_dir = Path(checkpointer.output_dir)
+    output_dir = Path(checkpointer._output_dir)
     output_dir.mkdir(exist_ok=True)
     checkpoint_file = Path.joinpath(
         output_dir, f"{file_name}"
     ).with_suffix(".pt")
 
     torch.save(ckpt_dict, checkpoint_file)
-    logger.info(
-        "Model checkpoint of size "
-        f"{os.path.getsize(checkpoint_file) / 1024**3:.2f} GiB "
-        f"saved to {checkpoint_file}"
-    )
 
 
 if __name__ == "__main__":
