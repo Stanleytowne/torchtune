@@ -45,15 +45,9 @@ def recipe_main(cfg: DictConfig) -> None:
     with training.set_default_dtype(dtype), device:
         model = config.instantiate(cfg.model)
 
-    if not isinstance(checkpointer, FullModelTorchTuneCheckpointer):
-        raise ValueError(
-            "Quantization is only supported for models quantized and saved with the "
-            "FullModelTorchTuneCheckpointer - please ensure you have quantized your "
-            "model and are using the quantized weights!"
-        )
-    model = quantizer.quantize(model)
+    model = quantizer.prepare(model)
     model = model.to(device=device, dtype=dtype)
-    ckpt_dict = checkpointer.load_checkpoint(weights_only=False)[
+    ckpt_dict = checkpointer.load_checkpoint()[
         training.MODEL_KEY
     ]
     for k, v in ckpt_dict.items():
@@ -71,23 +65,28 @@ def recipe_main(cfg: DictConfig) -> None:
             )
         ckpt_dict.update(ab_state)
     model.load_state_dict(ckpt_dict, assign=True)
-    
+
     # Ensure fake-quant is enabled, then apply it in-place to weights.
     model.apply(_enable_fake_quant)
     with torch.no_grad():
         model.apply(_apply_fake_quant_inplace)
 
     # Gather and save in torchtune format.
-    cpu_state_dict = training.gather_cpu_state_dict(
-        model, is_rank_zero=True, device=device
-    )
+    ckpt_dict = model.state_dict()
 
-    checkpoint_dict = {}
-    checkpoint_dict.update({training.MODEL_KEY: cpu_state_dict})
+    file_name = checkpointer.checkpoint_files[0].split(".")[0]
 
-    checkpointer.save_checkpoint(
-        checkpoint_dict,
-        epoch=0,
+    output_dir = Path(checkpointer.output_dir)
+    output_dir.mkdir(exist_ok=True)
+    checkpoint_file = Path.joinpath(
+        output_dir, f"{file_name}"
+    ).with_suffix(".pt")
+
+    torch.save(ckpt_dict, checkpoint_file)
+    logger.info(
+        "Model checkpoint of size "
+        f"{os.path.getsize(checkpoint_file) / 1024**3:.2f} GiB "
+        f"saved to {checkpoint_file}"
     )
 
 
