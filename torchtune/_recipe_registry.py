@@ -560,6 +560,12 @@ _ALL_RECIPES = [
         supports_distributed=False,
     ),
     Recipe(
+        name="save_fake_quant_weights",
+        file_path="save_fake_quant_weights.py",
+        configs=[],
+        supports_distributed=False,
+    ),
+    Recipe(
         name="qat_lora_finetune_distributed",
         file_path="qat_lora_finetune_distributed.py",
         configs=[
