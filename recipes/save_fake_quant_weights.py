@@ -32,24 +32,32 @@ def recipe_main(cfg: DictConfig) -> None:
       - optional: fake_quantized_output_path (str)
       - optional: quantizer.ab_state_dict_path (for pissaquant)
     """
-    log = utils.get_logger("INFO")
-    if cfg.get("quantizer", None) is None:
-        raise ValueError("quantizer must be specified to save fake-quant weights.")
-
     device = utils.get_device(device=cfg.device)
     dtype = training.get_dtype(cfg.dtype, device=device)
 
-    checkpointer = config.instantiate(cfg.checkpointer, should_load_recipe_state=False)
-    checkpoint_dict = checkpointer.load_checkpoint()
-    model_state_dict = checkpoint_dict[training.MODEL_KEY]
+    quantizer = config.instantiate(cfg.quantizer)
+    quantization_mode = training.get_quantizer_mode(quantizer)
 
-    # Build model on meta to avoid CPU RAM spikes.
-    with training.set_default_dtype(dtype), torch.device("meta"):
+    # Load checkpoint
+    checkpointer = config.instantiate(cfg.checkpointer)
+
+    # Initialize model
+    with training.set_default_dtype(dtype), device:
         model = config.instantiate(cfg.model)
 
-    quantizer = config.instantiate(cfg.quantizer)
-    quantizer.precision = dtype
-    model = quantizer.prepare(model)
+    if not isinstance(checkpointer, FullModelTorchTuneCheckpointer):
+        raise ValueError(
+            "Quantization is only supported for models quantized and saved with the "
+            "FullModelTorchTuneCheckpointer - please ensure you have quantized your "
+            "model and are using the quantized weights!"
+        )
+    model = quantizer.quantize(model)
+    model = model.to(device=device, dtype=dtype)
+    ckpt_dict = checkpointer.load_checkpoint(weights_only=False)[
+        training.MODEL_KEY
+    ]
+    for k, v in ckpt_dict.items():
+        ckpt_dict[k] = v.to(device)
 
     # If pissaquant AB parameters are provided, merge them before loading.
     ab_path = getattr(quantizer, "pissaquant_ab_init_path", None)
@@ -61,12 +69,9 @@ def recipe_main(cfg: DictConfig) -> None:
             raise ValueError(
                 f"AB state dict at {ab_path} must be a dict, got {type(ab_state)}"
             )
-        model_state_dict.update(ab_state)
-
-    training.load_from_full_model_state_dict(
-        model, model_state_dict, device, strict=True, cpu_offload=False
-    )
-
+        ckpt_dict.update(ab_state)
+    model.load_state_dict(ckpt_dict, assign=True)
+    
     # Ensure fake-quant is enabled, then apply it in-place to weights.
     model.apply(_enable_fake_quant)
     with torch.no_grad():
