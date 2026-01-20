@@ -222,7 +222,7 @@ def recipe_main(cfg: DictConfig) -> None:
         total_ab += A.numel() + B.numel()
         total_scale += w.shape[0] * (w.shape[1] // cfg_q.block_size)
 
-    out_path = Path(cfg_q.pissaquant_ab_init_path)
+    out_path = Path(quantizer.pissaquant_ab_init_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(ab_state_dict, out_path)
 
