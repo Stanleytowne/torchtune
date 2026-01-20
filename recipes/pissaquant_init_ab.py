@@ -207,13 +207,13 @@ def recipe_main(cfg: DictConfig) -> None:
                 (
                     f"Quant error (fro) {module_name}: "
                     f"pissaquant_ab={err_ab:.6e} -> {err_ab_refined:.6e}, "
-                    f"blockwise_int4={err_blk:.6e}"
+                    f"blockwise_int4={err_blk:.6e}, init_block_size={init_block_size}"
                 ),
             )
         else:
             utils.log_rank_zero(
                 log,
-                f"Quant error (fro) {module_name}: pissaquant_ab={err_ab:.6e}, blockwise_int4={err_blk:.6e}",
+                f"Quant error (fro) {module_name}: pissaquant_ab={err_ab:.6e}, blockwise_int4={err_blk:.6e}, init_block_size={init_block_size}",
             )
 
         prefix = weight_key[: -len(".weight")] if weight_key != "weight" else ""
