@@ -222,9 +222,8 @@ def recipe_main(cfg: DictConfig) -> None:
         total_ab += A.numel() + B.numel()
         total_scale += w.shape[0] * (w.shape[1] // cfg_q.block_size)
 
-    output_dir = Path(cfg.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = Path(cfg_q.get("pissaquant_ab_init_path", output_dir / "pissaquant_ab_init.pth"))
+    out_path = Path(cfg_q.pissaquant_ab_init_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(ab_state_dict, out_path)
 
     utils.log_rank_zero(
