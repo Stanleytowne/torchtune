@@ -47,6 +47,25 @@ def recipe_main(cfg: DictConfig) -> None:
 
     model = quantizer.prepare(model)
     model = model.to(device=device, dtype=dtype)
+
+    # output = model.output
+    # weight_quantizer = output.weight_fake_quantizer
+    # w = output.weight.data
+    # qw = weight_quantizer(output.weight.data)
+
+    # # Manual int4 weight fake-quant (no quantizer API).
+    # bsz = 256
+    # w_blocks = w.view(w.shape[0], w.shape[1] // bsz, bsz)
+    # eps = torch.finfo(w.dtype).eps
+    # max_abs = torch.amax(torch.abs(w_blocks), dim=-1, keepdim=True)
+    # scale = torch.clamp(max_abs / 7.5, min=eps)
+
+    # mid_point = 8
+    # q_uint = torch.round(w_blocks / scale + mid_point).clamp(0, 15)
+    # w_blk = ((q_uint - mid_point) * scale).view_as(w)
+
+    # torch.testing.assert_close(qw, w_blk)
+    
     ckpt_dict = checkpointer.load_checkpoint()[
         training.MODEL_KEY
     ]

@@ -55,16 +55,18 @@ def _refine_ab(
     optimizer = torch.optim.Adam([B, A], lr=lr)
 
     qmin, qmax = -8, 7
+    mid_point = 8
     for _ in range(steps):
         with torch.no_grad():
-            scale = torch.abs(B @ A) + eps
+            scale = torch.abs(B @ A)
             scale = torch.clamp(scale, min=eps)
-            q = torch.round(w_fp32 / scale).clamp(qmin, qmax)
+            q = torch.round(w_fp32 / scale + mid_point).clamp(0, 15)
+            w_hat = ((q - mid_point) * scale).view_as(w_fp32)
 
         optimizer.zero_grad(set_to_none=True)
-        scale = torch.abs(B @ A) + eps
+        scale = torch.abs(B @ A)
         scale = torch.clamp(scale, min=eps)
-        w_hat = scale * q
+        w_hat = (q - mid_point) * scale
         loss = torch.linalg.norm(w_hat - w_fp32)
         loss.backward()
         optimizer.step()
@@ -159,11 +161,11 @@ def recipe_main(cfg: DictConfig) -> None:
 
         # Compute quantization errors (Frobenius norm)
         # PissaQuant (AB) quantization before refinement
-        scale_ab = torch.abs(B.to(torch.float32) @ A.to(torch.float32)) + float(
-            cfg_q.eps
-        )
-        q_ab = torch.round(w_fp32 / scale_ab).clamp(-8, 7)
-        w_ab = q_ab * scale_ab
+        scale_ab = torch.abs(B.to(torch.float32) @ A.to(torch.float32))
+        scale_ab = torch.clamp(scale_ab, min=float(cfg_q.eps))
+        mid_point = 8
+        q_ab = torch.round(w_fp32 / scale_ab + mid_point).clamp(0, 15)
+        w_ab = ((q_ab - mid_point) * scale_ab).view_as(w)
         err_ab = torch.linalg.norm(w_fp32 - w_ab).item()
 
         # Block-wise int4 weight-only quantization (baseline)
@@ -172,12 +174,13 @@ def recipe_main(cfg: DictConfig) -> None:
             raise ValueError(
                 f"in_features ({w.shape[1]}) must be divisible by block_size ({bsz}) "
                 "to compute block-wise baseline error."
-            )
+            )        
         w_blocks = w_fp32.view(w.shape[0], w.shape[1] // bsz, bsz)
-        scale_blk = torch.amax(torch.abs(w_blocks), dim=-1, keepdim=True) / 7.0
+        scale_blk = torch.amax(torch.abs(w_blocks), dim=-1, keepdim=True) / 7.5
         scale_blk = torch.clamp(scale_blk, min=float(cfg_q.eps))
-        q_blk = torch.round(w_blocks / scale_blk).clamp(-8, 7)
-        w_blk = (q_blk * scale_blk).view_as(w_fp32)
+        mid_point = 8
+        q_uint = torch.round(w_blocks / scale + mid_point).clamp(0, 15)
+        w_blk = ((q_uint - mid_point) * scale).view_as(w)
         err_blk = torch.linalg.norm(w_fp32 - w_blk).item()
 
         # Optional refinement
@@ -193,9 +196,11 @@ def recipe_main(cfg: DictConfig) -> None:
             B = refined["B"]
             A = refined["A"]
 
-            scale_ab = torch.abs(B @ A) + float(cfg_q.eps)
-            q_ab = torch.round(w_fp32 / scale_ab).clamp(-8, 7)
-            w_ab = q_ab * scale_ab
+            scale_ab = torch.abs(B.to(torch.float32) @ A.to(torch.float32))
+            scale_ab = torch.clamp(scale_ab, min=float(cfg_q.eps))
+            mid_point = 8
+            q_ab = torch.round(w_fp32 / scale_ab + mid_point).clamp(0, 15)
+            w_ab = ((q_ab - mid_point) * scale_ab).view_as(w)
             err_ab_refined = torch.linalg.norm(w_fp32 - w_ab).item()
             utils.log_rank_zero(
                 log,
