@@ -179,8 +179,8 @@ def recipe_main(cfg: DictConfig) -> None:
         scale_blk = torch.amax(torch.abs(w_blocks), dim=-1, keepdim=True) / 7.5
         scale_blk = torch.clamp(scale_blk, min=float(cfg_q.eps))
         mid_point = 8
-        q_uint = torch.round(w_blocks / scale + mid_point).clamp(0, 15)
-        w_blk = ((q_uint - mid_point) * scale).view_as(w)
+        q_uint = torch.round(w_blocks / scale_blk + mid_point).clamp(0, 15)
+        w_blk = ((q_uint - mid_point) * scale_blk).view_as(w)
         err_blk = torch.linalg.norm(w_fp32 - w_blk).item()
 
         # Optional refinement

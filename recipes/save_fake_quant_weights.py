@@ -8,19 +8,6 @@ from omegaconf import DictConfig
 from torchtune import config, training, utils
 
 
-def _enable_fake_quant(mod: torch.nn.Module) -> None:
-    if hasattr(mod, "weight_fake_quantizer") and mod.weight_fake_quantizer is not None:
-        if hasattr(mod.weight_fake_quantizer, "enable_fake_quant"):
-            mod.weight_fake_quantizer.enable_fake_quant(True)
-
-
-def _apply_fake_quant_inplace(mod: torch.nn.Module) -> None:
-    if hasattr(mod, "weight_fake_quantizer") and mod.weight_fake_quantizer is not None:
-        if hasattr(mod, "weight"):
-            wq = mod.weight_fake_quantizer(mod.weight)
-            mod.weight.data = wq.to(dtype=mod.weight.dtype)
-
-
 @config.parse
 def recipe_main(cfg: DictConfig) -> None:
     """
@@ -47,25 +34,6 @@ def recipe_main(cfg: DictConfig) -> None:
 
     model = quantizer.prepare(model)
     model = model.to(device=device, dtype=dtype)
-
-    # output = model.output
-    # weight_quantizer = output.weight_fake_quantizer
-    # w = output.weight.data
-    # qw = weight_quantizer(output.weight.data)
-
-    # # Manual int4 weight fake-quant (no quantizer API).
-    # bsz = 256
-    # w_blocks = w.view(w.shape[0], w.shape[1] // bsz, bsz)
-    # eps = torch.finfo(w.dtype).eps
-    # max_abs = torch.amax(torch.abs(w_blocks), dim=-1, keepdim=True)
-    # scale = torch.clamp(max_abs / 7.5, min=eps)
-
-    # mid_point = 8
-    # q_uint = torch.round(w_blocks / scale + mid_point).clamp(0, 15)
-    # w_blk = ((q_uint - mid_point) * scale).view_as(w)
-
-    # torch.testing.assert_close(qw, w_blk)
-    
     ckpt_dict = checkpointer.load_checkpoint()[
         training.MODEL_KEY
     ]
@@ -85,14 +53,36 @@ def recipe_main(cfg: DictConfig) -> None:
         ckpt_dict.update(ab_state)
     model.load_state_dict(ckpt_dict, assign=True)
 
-    # Ensure fake-quant is enabled, then apply it in-place to weights.
-    model.apply(_enable_fake_quant)
-    with torch.no_grad():
-        model.apply(_apply_fake_quant_inplace)
+    # output = model.output
+    # weight_quantizer = output.weight_fake_quantizer
+    # w = output.weight.data
+    # qw = weight_quantizer(output.weight.data)
+
+    # # Manual int4 weight fake-quant (no quantizer API).
+    # bsz = 256
+    # w_blocks = w.view(w.shape[0], w.shape[1] // bsz, bsz)
+    # eps = torch.finfo(w.dtype).eps
+    # max_abs = torch.amax(torch.abs(w_blocks), dim=-1, keepdim=True)
+    # scale = torch.clamp(max_abs / 7.5, min=eps)
+
+    # mid_point = 8
+    # q_uint = torch.round(w_blocks / scale + mid_point).clamp(0, 15)
+    # w_blk = ((q_uint - mid_point) * scale).view_as(w)
+
+    # breakpoint()
+    # torch.testing.assert_close(qw, w_blk)
 
     # Gather and save in torchtune format.
-    ckpt_dict_full = model.state_dict()
-    ckpt_dict = {key: value for key, value in ckpt_dict_full.items() if 'fake_quantizer' not in key}
+    ckpt_dict = {key: value for key, value in ckpt_dict.items() if 'fake_quantizer' not in key}
+
+    for name in ckpt_dict.keys():
+        if name.endswith('.weight'):
+            mod = model.get_submodule(name[:-len('.weight')])
+            if hasattr(mod, "weight_fake_quantizer") and mod.weight_fake_quantizer is not None:
+                weight_quantizer = mod.weight_fake_quantizer
+                w = ckpt_dict[name]
+                qw = weight_quantizer(w)
+                ckpt_dict[name] = qw
 
     file_name = "model-00001-of-00001"
 
