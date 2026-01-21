@@ -27,7 +27,7 @@ from torchtune.datasets import ConcatDataset
 from torchtune.recipe_interfaces import FTRecipeInterface
 from torchtune.training import DummyProfiler, PROFILER_KEY
 from torchtune.training.activations import apply_selective_activation_checkpointing
-from torchtune.training.lr_schedulers import get_lr
+from torchtune.training.lr_schedulers import get_lr, get_cosine_schedule_with_warmup
 
 from tqdm import tqdm
 
@@ -160,6 +160,11 @@ class QATRecipeDistributed(FTRecipeInterface):
         self._optimizer_in_bwd = cfg.get("optimizer_in_bwd", False)
         self._clip_grad_norm = cfg.get("clip_grad_norm", None)
         self._fake_quant_after_n_steps = cfg.get("fake_quant_after_n_steps", None)
+
+        self._train_w_after_n_steps = cfg.get("train_w_after_n_steps", None)
+        self._qparam_lr_rate = cfg.get("qparam_lr_rate", 1)
+        self._lr_warmup_steps = cfg.get("lr_warmup_steps", None)
+
         self._quantizer_mode = None
 
         # Optimizer in backward is not compatible with gradient accumulation or gradient clipping
@@ -621,7 +626,16 @@ class QATRecipeDistributed(FTRecipeInterface):
             utils.log_rank_zero(log, "In-backward optimizers are set up.")
             return None
         else:
-            optimizer = config.instantiate(cfg_optimizer, self._model.parameters())
+            q_params = [p for n, p in self._model.named_parameters() if "weight_fake_quantizer" in n]
+            other_params = [p for n, p in self._model.named_parameters() if "weight_fake_quantizer" not in n]
+
+            base_lr = cfg_optimizer['lr']
+            param_groups = [
+                {"params": other_params},
+                {"params": q_params, "lr": base_lr * self._qparam_lr_rate, 'weight_decay': 0}
+            ]
+
+            optimizer = config.instantiate(cfg_optimizer, param_groups)
             if opt_state_dict:
                 training.load_from_full_optimizer_state_dict(
                     self._model,
@@ -631,6 +645,11 @@ class QATRecipeDistributed(FTRecipeInterface):
                 )
 
             utils.log_rank_zero(log, "Optimizer is initialized.")
+
+            if self._lr_warmup_steps:
+                self._lr_scheduler = get_cosine_schedule_with_warmup(optimizer, self._lr_warmup_steps, self.total_epochs * self.max_steps_per_epoch)
+            else:
+                self._lr_scheduler = None
             return optimizer
 
     def _setup_data(
@@ -855,6 +874,16 @@ class QATRecipeDistributed(FTRecipeInterface):
                         )
                         self._model.apply(enable_fq)
 
+                if self._train_w_after_n_steps is not None:
+                    if self.global_step == 0:
+                        log.info(f"freeze weight, will re-enable in step {self._train_w_after_n_steps}")
+                        for name, param in self._model.named_parameters():
+                            if 'fake' not in name:
+                                param.requires_grad = False
+                    elif self.global_step == self._train_w_after_n_steps:
+                        log.info("Enabling training w")
+                        for name, param in self._model.named_parameters():
+                            param.requires_grad = True
                 utils.batch_to_device(batch, self._device)
 
                 # Calculate the number of unmasked tokens in the current batch
@@ -918,6 +947,9 @@ class QATRecipeDistributed(FTRecipeInterface):
                             ).full_tensor()
                         self._optimizer.step()
                         self._optimizer.zero_grad(set_to_none=True)
+
+                        if self._lr_scheduler:
+                            self._lr_scheduler.step()
 
                     # Update the number of steps when the weights are updated
                     self.global_step += 1

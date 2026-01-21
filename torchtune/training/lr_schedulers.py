@@ -89,7 +89,7 @@ def get_lr(
 
     # LR Schedulers are the same across all param groups for full_finetune right now
     lr = param_groups[0]["lr"]
-    for group in param_groups:
-        if group["lr"] != lr:
-            raise RuntimeError("LR Schedulers are different across all param groups ")
+    # for group in param_groups:
+    #     if group["lr"] != lr:
+    #         raise RuntimeError("LR Schedulers are different across all param groups ")
     return lr
