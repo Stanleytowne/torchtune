@@ -782,6 +782,7 @@ class QATRecipeDistributed(FTRecipeInterface):
                 ab_dir.mkdir(parents=True, exist_ok=True)
                 ab_path = ab_dir / f"pissaquant_ab_epoch_{epoch}.pth"
                 torch.save(ab_state_dict, ab_path)
+                log.info(f"Saving pissaquant ab to {ab_dir}")
 
             start = time.perf_counter()
             checkpoint_dict.update({training.MODEL_KEY: cpu_state_dict})

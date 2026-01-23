@@ -117,6 +117,8 @@ def qwen3_tune_to_hf(
         head_dim = dim // num_heads
 
     for key, value in state_dict.items():
+        if "weight_fake_quantizer" in key: # Skip pissaquant quantizer's weight
+            continue
         new_key = get_mapped_key(key, inverted_mapping_dict)
         converted_state_dict[new_key] = value
         if QWEN3_TUNE_EMBEDDING_KEY in key and tie_word_embeddings:
