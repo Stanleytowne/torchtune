@@ -488,8 +488,7 @@ class EleutherEvalRecipe(EvalRecipeInterface):
                     "and when quantizing models. Please use the corresponding post-training "
                     "quantizer e.g. Int8DynActInt4WeightQuantizer for Int8DynActInt4WeightQATQuantizer."
                 )
-            model = quantizer.quantize(model)
-            model = model.to(device=self.device, dtype=self.dtype)
+            # Load weights FIRST, then quantize (for PTQ from fresh checkpoint)
             if isinstance(checkpointer, FullModelTorchTuneCheckpointer):
                 ckpt_dict = checkpointer.load_checkpoint(weights_only=False)[
                     training.MODEL_KEY
@@ -498,9 +497,9 @@ class EleutherEvalRecipe(EvalRecipeInterface):
                 ckpt_dict = checkpointer.load_checkpoint()[
                     training.MODEL_KEY
                 ]
-            for k, v in ckpt_dict.items():
-                ckpt_dict[k] = v.to(self.device)
-            model.load_state_dict(ckpt_dict, assign=True)
+            model.load_state_dict(ckpt_dict)
+            model = model.to(device=self.device, dtype=self.dtype)
+            model = quantizer.quantize(model)
         else:
             ckpt_dict = checkpointer.load_checkpoint()[training.MODEL_KEY]
             model.load_state_dict(ckpt_dict)
