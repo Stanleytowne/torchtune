@@ -512,9 +512,14 @@ class EleutherEvalRecipe(EvalRecipeInterface):
                 )
             model = quantizer.quantize(model)
             model = model.to(device=self.device, dtype=self.dtype)
-            ckpt_dict = checkpointer.load_checkpoint(weights_only=False)[
-                training.MODEL_KEY
-            ]
+            if isinstance(checkpointer, FullModelTorchTuneCheckpointer):
+                ckpt_dict = checkpointer.load_checkpoint(weights_only=False)[
+                    training.MODEL_KEY
+                ]
+            else:
+                ckpt_dict = checkpointer.load_checkpoint()[
+                    training.MODEL_KEY
+                ]
             for k, v in ckpt_dict.items():
                 ckpt_dict[k] = v.to(self.device)
             model.load_state_dict(ckpt_dict, assign=True)
