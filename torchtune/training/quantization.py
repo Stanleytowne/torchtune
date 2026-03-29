@@ -40,6 +40,7 @@ __all__ = [
     "Int8DynActInt4WeightQuantizer",
     "Int8DynActInt4WeightQATQuantizer",
     "Int8DynActInt4WeightQATQuantizerModuleSwap",
+    "Int8ActivationOnlyQuantizer",
 ]
 
 
@@ -160,6 +161,53 @@ _quantizer_mode_to_disable_fake_quant[
 _quantizer_mode_to_enable_fake_quant[
     "8da4w-qat-module-swap"
 ] = enable_8da4w_fake_quant_module_swap
+
+
+# =========================================
+# int8 dynamic activation only (no weight) |
+# =========================================
+
+
+import torch
+
+
+class Int8ActivationOnlyQuantizer:
+    """
+    Quantizer that applies only int8 per-token dynamic asymmetric activation
+    quantization to nn.Linear layers, without modifying weights.
+
+    This is designed for evaluating models whose weights are already quantized
+    (e.g., by LoRDS, GPTQ, AWQ) in a W4A8 setting. The activation quantization
+    is aligned with torchao's Int8DynActInt4WeightQuantizer:
+      - dtype: int8 (signed, -128 to 127)
+      - granularity: per-token (each token gets its own scale/zero_point)
+      - mapping: asymmetric
+      - applied to: all nn.Linear layers (including lm_head, excluding Embedding/Norm)
+    """
+
+    def quantize(self, model):
+        for name, module in model.named_modules():
+            if isinstance(module, nn.Linear):
+                module.register_forward_pre_hook(self._int8_activation_hook)
+        return model
+
+    @staticmethod
+    def _int8_activation_hook(module, input):
+        x = input[0]
+        # Per-token asymmetric signed int8 fake quantization
+        # Aligned with torchao._int8_asymm_per_token_quant:
+        #   MappingType.ASYMMETRIC, target_dtype=int8, per_token block_size
+        quant_min, quant_max = -128, 127
+        x_min = x.amin(dim=-1, keepdim=True)
+        x_max = x.amax(dim=-1, keepdim=True)
+        eps = torch.finfo(torch.float32).eps
+        scale = ((x_max - x_min) / (quant_max - quant_min)).clamp(min=eps).to(torch.float32)
+        zero_point = torch.clamp(
+            torch.round(quant_min - x_min / scale), quant_min, quant_max
+        ).to(torch.int8)
+        x_q = torch.clamp(torch.round(x / scale + zero_point.float()), quant_min, quant_max)
+        x_deq = ((x_q - zero_point.float()) * scale).to(x.dtype)
+        return (x_deq,) + input[1:]
 
 
 def get_quantizer_mode(quantizer: Optional[Callable]) -> Optional[str]:
