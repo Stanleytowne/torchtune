@@ -510,6 +510,18 @@ class EleutherEvalRecipe(EvalRecipeInterface):
         if is_activation_only:
             model = quantizer.quantize(model)
 
+        # Log model architecture for verification
+        self.logger.info(f"Model architecture:\n{model}")
+        # Log quantization status
+        if quantization_mode is not None:
+            self.logger.info(f"Quantization mode: {quantization_mode}")
+        if is_activation_only:
+            num_hooks = sum(
+                len(m._forward_pre_hooks) for m in model.modules()
+                if isinstance(m, torch.nn.Linear)
+            )
+            self.logger.info(f"Int8 activation hooks registered on {num_hooks} nn.Linear layers")
+
         # Load model weights into initialized model
         self.logger.info(f"Model is initialized with precision {self.dtype}.")
 
