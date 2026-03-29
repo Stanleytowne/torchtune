@@ -477,13 +477,10 @@ class EleutherEvalRecipe(EvalRecipeInterface):
             model = config.instantiate(cfg.model)
 
         # Quantize model if requested
+        from torchtune.training.quantization import Int8ActivationOnlyQuantizer
+        is_activation_only = isinstance(quantizer, Int8ActivationOnlyQuantizer)
+
         if quantization_mode is not None:
-            if not isinstance(checkpointer, FullModelTorchTuneCheckpointer):
-                raise ValueError(
-                    "Quantization is only supported for models quantized and saved with the "
-                    "FullModelTorchTuneCheckpointer - please ensure you have quantized your "
-                    "model and are using the quantized weights!"
-                )
             if "qat" in quantization_mode:
                 raise ValueError(
                     "You have specified a quantizer with 'QAT' - "
@@ -493,15 +490,25 @@ class EleutherEvalRecipe(EvalRecipeInterface):
                 )
             model = quantizer.quantize(model)
             model = model.to(device=self.device, dtype=self.dtype)
-            ckpt_dict = checkpointer.load_checkpoint(weights_only=False)[
-                training.MODEL_KEY
-            ]
+            if isinstance(checkpointer, FullModelTorchTuneCheckpointer):
+                ckpt_dict = checkpointer.load_checkpoint(weights_only=False)[
+                    training.MODEL_KEY
+                ]
+            else:
+                ckpt_dict = checkpointer.load_checkpoint()[
+                    training.MODEL_KEY
+                ]
             for k, v in ckpt_dict.items():
                 ckpt_dict[k] = v.to(self.device)
             model.load_state_dict(ckpt_dict, assign=True)
         else:
             ckpt_dict = checkpointer.load_checkpoint()[training.MODEL_KEY]
             model.load_state_dict(ckpt_dict)
+
+        # Apply activation-only quantization after loading weights
+        # (for models whose weights are already fake-quantized, e.g., LoRDS)
+        if is_activation_only:
+            model = quantizer.quantize(model)
 
         # Load model weights into initialized model
         self.logger.info(f"Model is initialized with precision {self.dtype}.")
