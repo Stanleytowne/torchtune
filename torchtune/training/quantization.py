@@ -60,6 +60,10 @@ __all__ = [
     "Int8DynActInt4WeightQATQuantizerModuleSwap",
     "PissaQuantInt4WeightQATQuantizer",
     "Int8ActivationOnlyQuantizer",
+    "Int4DynActInt4WeightQuantizer",
+    "Int6DynActInt4WeightQuantizer",
+    "Int4ActivationOnlyQuantizer",
+    "Int6ActivationOnlyQuantizer",
 ]
 
 
@@ -218,6 +222,165 @@ class Int8ActivationOnlyQuantizer:
         x_q = torch.clamp(torch.round(x / scale + zero_point.float()), quant_min, quant_max)
         x_deq = ((x_q - zero_point.float()) * scale).to(x.dtype)
         return (x_deq,) + input[1:]
+
+
+class Int6ActivationOnlyQuantizer:
+    """
+    Quantizer that applies only int6 per-token dynamic asymmetric activation
+    quantization to nn.Linear layers, without modifying weights.
+
+    This is designed for evaluating models whose weights are already quantized
+    (e.g., by LoRDS, GPTQ, AWQ) in a W4A6 setting.
+      - range: signed [-32, 31]
+      - granularity: per-token
+      - mapping: asymmetric
+    """
+
+    def quantize(self, model):
+        for name, module in model.named_modules():
+            if isinstance(module, nn.Linear):
+                module.register_forward_pre_hook(self._int6_activation_hook)
+        return model
+
+    @staticmethod
+    def _int6_activation_hook(module, input):
+        x = input[0]
+        quant_min, quant_max = -32, 31
+        x_min = x.amin(dim=-1, keepdim=True)
+        x_max = x.amax(dim=-1, keepdim=True)
+        eps = torch.finfo(torch.float32).eps
+        scale = ((x_max - x_min) / (quant_max - quant_min)).clamp(min=eps).to(torch.float32)
+        zero_point = torch.clamp(
+            torch.round(quant_min - x_min / scale), quant_min, quant_max
+        ).to(torch.int8)
+        x_q = torch.clamp(torch.round(x / scale + zero_point.float()), quant_min, quant_max)
+        x_deq = ((x_q - zero_point.float()) * scale).to(x.dtype)
+        return (x_deq,) + input[1:]
+
+
+class Int4ActivationOnlyQuantizer:
+    """
+    Quantizer that applies only int4 per-token dynamic asymmetric activation
+    quantization to nn.Linear layers, without modifying weights.
+
+    This is designed for evaluating models whose weights are already quantized
+    (e.g., by LoRDS, GPTQ, AWQ) in a W4A4 setting.
+      - range: signed [-8, 7]
+      - granularity: per-token
+      - mapping: asymmetric
+    """
+
+    def quantize(self, model):
+        for name, module in model.named_modules():
+            if isinstance(module, nn.Linear):
+                module.register_forward_pre_hook(self._int4_activation_hook)
+        return model
+
+    @staticmethod
+    def _int4_activation_hook(module, input):
+        x = input[0]
+        quant_min, quant_max = -8, 7
+        x_min = x.amin(dim=-1, keepdim=True)
+        x_max = x.amax(dim=-1, keepdim=True)
+        eps = torch.finfo(torch.float32).eps
+        scale = ((x_max - x_min) / (quant_max - quant_min)).clamp(min=eps).to(torch.float32)
+        zero_point = torch.clamp(
+            torch.round(quant_min - x_min / scale), quant_min, quant_max
+        ).to(torch.int8)
+        x_q = torch.clamp(torch.round(x / scale + zero_point.float()), quant_min, quant_max)
+        x_deq = ((x_q - zero_point.float()) * scale).to(x.dtype)
+        return (x_deq,) + input[1:]
+
+
+class Int4DynActInt4WeightQuantizer:
+    """
+    Quantizer for applying int4 per token dynamic activation + int4
+    per group weight quantization to linear layers in the model.
+
+    This is designed for evaluating models in a W4A4 setting.
+    Weight quantization uses torchao's int4_weight_only (TensorCoreTiledLayout).
+    Activation quantization uses per-token symmetric signed int4 fake quantization
+    (range [-8, 7]) applied via forward pre-hooks.
+    """
+
+    def __init__(self, groupsize: int = 128, inner_k_tiles: int = 8):
+        self.groupsize = groupsize
+        self.inner_k_tiles = inner_k_tiles
+
+    def quantize(self, model):
+        # Step 1: apply int4 weight-only quantization
+        layout_type = TensorCoreTiledLayout(self.inner_k_tiles)
+        quantize_fn = int4_weight_only(self.groupsize, layout_type)
+        quantize_(model, quantize_fn)
+        # Step 2: add int4 activation fake quantization hooks
+        for name, module in model.named_modules():
+            if isinstance(module, nn.Linear):
+                module.register_forward_pre_hook(self._int4_activation_hook)
+        return model
+
+    @staticmethod
+    def _int4_activation_hook(module, input):
+        x = input[0]
+        # Per-token asymmetric signed int4 fake quantization
+        # Aligned with the asymmetric scheme used in Int8ActivationOnlyQuantizer
+        quant_min, quant_max = -8, 7
+        x_min = x.amin(dim=-1, keepdim=True)
+        x_max = x.amax(dim=-1, keepdim=True)
+        eps = torch.finfo(torch.float32).eps
+        scale = ((x_max - x_min) / (quant_max - quant_min)).clamp(min=eps).to(torch.float32)
+        zero_point = torch.clamp(
+            torch.round(quant_min - x_min / scale), quant_min, quant_max
+        ).to(torch.int8)
+        x_q = torch.clamp(torch.round(x / scale + zero_point.float()), quant_min, quant_max)
+        x_deq = ((x_q - zero_point.float()) * scale).to(x.dtype)
+        return (x_deq,) + input[1:]
+
+
+_quantizer_to_mode[Int4DynActInt4WeightQuantizer] = "4da4w"
+
+
+class Int6DynActInt4WeightQuantizer:
+    """
+    Quantizer for applying int6 per token dynamic activation + int4
+    per group weight quantization to linear layers in the model.
+
+    This is designed for evaluating models in a W4A6 setting.
+    Weight quantization uses torchao's int4_weight_only (TensorCoreTiledLayout).
+    Activation quantization uses per-token asymmetric signed int6 fake quantization
+    (range [-32, 31]) applied via forward pre-hooks.
+    """
+
+    def __init__(self, groupsize: int = 128, inner_k_tiles: int = 8):
+        self.groupsize = groupsize
+        self.inner_k_tiles = inner_k_tiles
+
+    def quantize(self, model):
+        layout_type = TensorCoreTiledLayout(self.inner_k_tiles)
+        quantize_fn = int4_weight_only(self.groupsize, layout_type)
+        quantize_(model, quantize_fn)
+        for name, module in model.named_modules():
+            if isinstance(module, nn.Linear):
+                module.register_forward_pre_hook(self._int6_activation_hook)
+        return model
+
+    @staticmethod
+    def _int6_activation_hook(module, input):
+        x = input[0]
+        # Per-token asymmetric signed int6 fake quantization
+        quant_min, quant_max = -32, 31
+        x_min = x.amin(dim=-1, keepdim=True)
+        x_max = x.amax(dim=-1, keepdim=True)
+        eps = torch.finfo(torch.float32).eps
+        scale = ((x_max - x_min) / (quant_max - quant_min)).clamp(min=eps).to(torch.float32)
+        zero_point = torch.clamp(
+            torch.round(quant_min - x_min / scale), quant_min, quant_max
+        ).to(torch.int8)
+        x_q = torch.clamp(torch.round(x / scale + zero_point.float()), quant_min, quant_max)
+        x_deq = ((x_q - zero_point.float()) * scale).to(x.dtype)
+        return (x_deq,) + input[1:]
+
+
+_quantizer_to_mode[Int6DynActInt4WeightQuantizer] = "6da4w"
 
 
 def get_quantizer_mode(quantizer: Optional[Callable]) -> Optional[str]:
