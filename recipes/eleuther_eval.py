@@ -477,8 +477,15 @@ class EleutherEvalRecipe(EvalRecipeInterface):
             model = config.instantiate(cfg.model)
 
         # Quantize model if requested
-        from torchtune.training.quantization import Int8ActivationOnlyQuantizer
-        is_activation_only = isinstance(quantizer, Int8ActivationOnlyQuantizer)
+        from torchtune.training.quantization import (
+            Int8ActivationOnlyQuantizer,
+            Int4ActivationOnlyQuantizer,
+            Int6ActivationOnlyQuantizer,
+        )
+        is_activation_only = isinstance(
+            quantizer,
+            (Int8ActivationOnlyQuantizer, Int4ActivationOnlyQuantizer, Int6ActivationOnlyQuantizer),
+        )
 
         if quantization_mode is not None:
             if "qat" in quantization_mode:
