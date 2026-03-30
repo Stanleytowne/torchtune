@@ -526,7 +526,10 @@ class EleutherEvalRecipe(EvalRecipeInterface):
                 len(m._forward_pre_hooks) for m in model.modules()
                 if isinstance(m, torch.nn.Linear)
             )
-            self.logger.info(f"Int8 activation hooks registered on {num_hooks} nn.Linear layers")
+            self.logger.info(
+                f"Activation-only quantizer ({type(quantizer).__name__}) "
+                f"hooks registered on {num_hooks} nn.Linear layers"
+            )
 
         # Load model weights into initialized model
         self.logger.info(f"Model is initialized with precision {self.dtype}.")
